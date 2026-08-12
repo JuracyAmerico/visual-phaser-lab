@@ -64,3 +64,48 @@ all three sit near 1750 cM.
 - Segment export (CSV / JSON / DNA Painter format)
 - The Lander–Green inheritance-vector HMM: grandparental assignment with
   per-segment posterior confidence, for N siblings rather than exactly 3
+
+## `vplab/phase_hmm.py` — grandparental assignment
+
+Lander–Green inheritance-vector HMM. Viterbi gives the assignment,
+forward–backward gives a posterior per segment, and it takes N siblings rather
+than the three every existing visual-phasing aid is limited to. 0.5s per
+chromosome.
+
+Emissions are calibrated from the data, not assumed — an unrelated pair gives
+the IBD0 row, a parent–child pair gives IBD1 (they share exactly one copy at
+every locus by definition), and apparent exclusions in that parent–child pair
+give the error rate.
+
+Measured on this family: **0.0115% genotyping error**, and an unrelated pair
+reads as fully identical at **74% of individual markers**. That second figure is
+why visual phasing works on runs and never on single SNPs — per-marker FIR
+carries almost no information, and the discriminating signal is NIR (3.3%
+unrelated vs 0.01% parent–child).
+
+### Validation
+
+**Simulated, against known truth:** 85.5% co-assignment accuracy; 67.5% of
+crossovers recovered within 2 cM, median positional error 0.00 cM. Pessimistic —
+the simulator has no LD, so its IBS is noisier than reality.
+
+**Real data, via an independent anchor:** where the HMM says two siblings
+inherited the same maternal haplotype, their matching to a great-aunt is 86.5%
+concordant; where it says they differ, 66.9%. A **+19.6% lift** against evidence
+the model never saw. Consistent with the simulated 85%.
+
+### Two validation designs that failed first
+
+Both are recorded because each looked reasonable and produced a confident
+wrong answer.
+
+1. **Saturation.** Testing against "matches any of three great-aunts" — each
+   shares ~50% of the genome, so the union covers ~87% and there is no contrast
+   left to measure. Produced a flat 80–90% on both groups.
+
+2. **A pedigree-level error.** A great-aunt is the sister of the trio's
+   *mother*, so she descends from *both* of that mother's parents and is
+   related to both maternal groups. She cannot discriminate which grandparent a
+   segment came from, and the near-zero separation measured was the correct
+   answer to a meaningless question. Anchoring *which* grandparent needs someone
+   related to only one of them.
