@@ -67,7 +67,19 @@ OBS = (FIR, HIR, NIR)
 # Female meiosis recombines more than male; the map here is sex-averaged, so
 # each side is scaled toward its own rate. Genome-wide averages are ~26
 # crossovers per male gamete and ~42 per female.
+#
+# WARNING: these scales are a PRIOR IMPOSED ON side 0 and side 1, not something
+# the model discovers. Side 0 is told to recombine less. Observing that it does
+# is therefore circular, and crossover counts CANNOT be used to decide which
+# side is the father's. Identifying that requires an external anchor -- a
+# relative known to descend from one specific grandparent.
 MALE_SCALE, FEMALE_SCALE = 0.78, 1.25
+
+# Default marker spacing, in cM, for thin_markers(). Calibrated on real data by
+# sweeping the spacing until inferred crossover counts matched the biological
+# rate: unthinned gave 234 paternal / 872 maternal across three siblings where
+# ~78 / ~126 are expected; 0.2 cM gave 44 / 128.
+DEFAULT_THINNING_CM = 0.2
 
 
 @dataclass
@@ -317,3 +329,27 @@ def assign_grandparents(path, states, positions, cm, n_siblings, min_cm=1.0):
                     "markers": int(b - a),
                 })
     return pd.DataFrame(rows)
+
+
+def thin_markers(cm, min_gap_cm):
+    """
+    Indices of a marker subset spaced at least `min_gap_cm` apart.
+
+    The emission model treats markers as independent. Real markers are not:
+    linkage disequilibrium correlates neighbours, so a dense panel supplies far
+    less information than its count implies. The HMM, believing every marker,
+    lets noise outvote the transition prior and switches state far too often --
+    measured at 3-7x the biological crossover rate on real data, against ~1x on
+    LD-free simulated data, which is what identified LD as the cause.
+
+    Thinning to a spacing beyond the LD decay length restores the independence
+    the model assumes. Segments of genealogical interest are >=7 cM, so even
+    coarse thinning leaves tens of markers per segment.
+    """
+    keep = [0]
+    last = cm[0]
+    for i in range(1, len(cm)):
+        if cm[i] - last >= min_gap_cm:
+            keep.append(i)
+            last = cm[i]
+    return np.array(keep)
