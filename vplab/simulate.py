@@ -24,6 +24,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from . import genmap as _G
+
 BASES = np.array(["A", "C", "G", "T"])
 
 # The four grandparents, in the order used throughout: paternal grandfather,
@@ -40,6 +42,7 @@ class Pedigree:
     origins: dict                   # name -> DataFrame(paternal, maternal) of grandparent labels
     crossovers: dict                # name -> {"paternal": {chrom: [pos]}, "maternal": {...}}
     founders: dict = field(default_factory=dict)   # grandparent -> (hap0, hap1)
+    relatives: dict = field(default_factory=dict)  # 'Father'/'Mother'/'Unrelated' -> genotype frame
 
     @property
     def siblings(self):
@@ -54,13 +57,18 @@ def load_map(map_path, chromosomes=None):
     return raw.sort_values(["Chromosome", "Position"]).reset_index(drop=True)
 
 
-def build_marker_panel(genetic_map, n_markers_per_chrom=6000, rng=None):
+def build_marker_panel(genetic_map, n_markers_per_chrom=6000, rng=None,
+                       sex_map=None):
     """
     Lay a realistic SNP panel over the mapped region of each chromosome.
 
     Consumer chips carry roughly 600-700k markers genome-wide. Spacing is made
     uneven on purpose: uniform spacing hides exactly the failure modes (sparse
     regions, map edges) that matter.
+
+    Pass `sex_map` (a genmap.SexSpecificMap) to attach `cm_male` and
+    `cm_female` as well; without it the panel carries only the sex-averaged
+    coordinate and meiosis falls back to global rate scales.
     """
     rng = rng or np.random.default_rng(0)
     frames = []
@@ -80,70 +88,145 @@ def build_marker_panel(genetic_map, n_markers_per_chrom=6000, rng=None):
                 }
             )
         )
-    return pd.concat(frames, ignore_index=True)
+    panel = pd.concat(frames, ignore_index=True)
+    if sex_map is not None:
+        panel = sex_map.annotate(panel)
+    return panel
 
 
-def _draw_founder_haplotypes(n_markers, rng, maf_range=(0.05, 0.5)):
+# Minor-allele-frequency spectrum of the marker panel, as Beta(a, b).
+#
+# This is not a cosmetic detail: it sets how often two *unrelated* people
+# coincide by chance, which is the noise floor the whole method works against.
+# The default is calibrated against a real unrelated pair in the reference
+# family (FIR at 74.0% of markers, NIR at 3.3%); Beta(0.25, 1.2) reproduces
+# 73.9% / 3.6%. Consumer chips are dominated by low-frequency markers, so a
+# flat MAF distribution makes simulated data far more discriminating than any
+# real dataset.
+MAF_BETA = (0.25, 1.2)
+MAF_FLOOR, MAF_CEILING = 0.002, 0.5
+
+
+def assign_allele_frequencies(n_markers, rng, maf_beta=MAF_BETA):
     """
-    Two haplotypes for one founder, drawn from per-marker allele frequencies.
+    Reference/alternate alleles and a minor-allele frequency for each marker.
 
-    Markers are biallelic with a random reference/alternate pair, which keeps
-    the simulation honest: a classifier that mishandles multi-allelic or
-    strand-flipped data will not be flattered by this input.
+    Allele identity is a property of the *marker*, not of the individual: every
+    person genotyped on a given chip is scored against the same two alleles at
+    a locus. Drawing a fresh reference/alternate pair per founder — as an
+    earlier version of this file did — gives each founder a private biallelic
+    system, so two unrelated people almost never share an allele. Measured, it
+    put an unrelated pair at 56% no-match where real kits sit at 3.3%, handing
+    the downstream model ~17x more exclusion evidence than reality supplies.
+    Exclusions are the strongest signal visual phasing has, so that error makes
+    simulated data *easier* than real data, not noisier.
     """
     ref_idx = rng.integers(0, 4, size=n_markers)
     # Alternate allele differs from reference.
     alt_idx = (ref_idx + rng.integers(1, 4, size=n_markers)) % 4
-    maf = rng.uniform(*maf_range, size=n_markers)
+    maf = np.clip(rng.beta(*maf_beta, size=n_markers), MAF_FLOOR, MAF_CEILING)
+    return ref_idx, alt_idx, maf
 
+
+def _draw_founder_haplotypes(panel, rng):
+    """
+    Two independent haplotypes for one founder, drawn from the panel's own
+    allele frequencies. Founders are unrelated to each other, so their
+    haplotypes are independent draws — but from a *shared* allele model.
+    """
+    ref_idx, alt_idx, maf = panel
+    n_markers = len(maf)
     hap0 = np.where(rng.random(n_markers) < maf, alt_idx, ref_idx)
     hap1 = np.where(rng.random(n_markers) < maf, alt_idx, ref_idx)
-    return hap0, hap1, ref_idx, alt_idx
+    return hap0, hap1
 
 
-def _simulate_meiosis(markers, rng, sex="female", interference=True):
+def meiosis_cm(markers, sex):
+    """
+    The genetic coordinate a meiosis of this sex actually runs on.
+
+    Prefers the sex-specific column when the panel carries one. Falling back to
+    a scaled sex-averaged map gets the *number* of crossovers right and their
+    *placement* wrong, and placement is what distinguishes a paternal
+    chromosome from a maternal one.
+    """
+    column = "cm_female" if sex == "female" else "cm_male"
+    if column in markers.columns and markers[column].notna().all():
+        return markers[column].values, 1.0
+    male_scale, female_scale = _G.fallback_scales()
+    return markers["cm"].values, (female_scale if sex == "female" else male_scale)
+
+
+# Shape parameter of the gamma renewal model of crossover placement. nu = 1 is
+# a Poisson process (no interference); human estimates cluster around 4-6.
+INTERFERENCE_NU = 4.0
+
+
+def _gamma_renewal_crossovers(start_cm, end_cm, rng, nu=INTERFERENCE_NU,
+                              burn_in_cm=300.0):
+    """
+    Crossover positions along one chromosome, with interference.
+
+    Crossovers are not independent: one suppresses others nearby, so tight
+    doubles are far rarer than a Poisson process predicts. The standard model
+    is a gamma renewal process — inter-crossover distances are Gamma(nu,
+    1/(nu*lambda)) rather than exponential, which keeps the mean rate at the
+    map's own (one crossover per Morgan) while pushing the *variance* down.
+
+    This replaces an earlier scheme that drew Poisson crossovers and then
+    deleted any falling within 10 cM of the previous one. Deleting events does
+    suppress tight doubles, but it also suppresses the rate: measured, it
+    produced 37.4 maternal crossovers per gamete where the map specifies 41.
+    Simulated truth was quietly wrong, so every count scored against it was
+    scored against the wrong target.
+
+    A burn-in before the chromosome start avoids the edge bias of beginning the
+    renewal process exactly at position zero.
+    """
+    scale_cm = 100.0 / nu          # mean spacing stays 100 cM = 1 Morgan
+    position = start_cm - burn_in_cm
+    out = []
+    while True:
+        position += rng.gamma(nu, scale_cm)
+        if position > end_cm:
+            return np.array(out)
+        if position >= start_cm:
+            out.append(position)
+
+
+def _simulate_meiosis(markers, rng, sex="female", interference=True,
+                      interference_nu=INTERFERENCE_NU):
     """
     Produce one gamete: a mosaic of the parent's two haplotypes.
 
-    Crossovers are drawn as a Poisson process along the genetic map, which is
-    what makes the map the right transition model for an HMM downstream. Female
-    meiosis recombines noticeably more than male; the ratio here (~1.6x) is the
-    well-established genome-wide average, applied as a scale factor since this
-    map is sex-averaged.
+    Crossovers are drawn as a Poisson process along that sex's genetic map,
+    which is what makes the same map the right transition model for an HMM
+    downstream.
 
     Returns (selector, crossover_positions) where selector[i] in {0,1} says
     which parental haplotype marker i came from.
     """
-    scale = 1.25 if sex == "female" else 0.78
+    cm_all, scale = meiosis_cm(markers, sex)
 
     selector = np.zeros(len(markers), dtype=np.int8)
     crossovers = {}
 
     for chrom, group in markers.groupby("chromosome"):
         idx = group.index.values
-        cm = group["cm"].values
+        cm = cm_all[idx]
         length_cm = cm[-1] - cm[0]
         if length_cm <= 0:
             continue
 
-        expected = (length_cm / 100.0) * scale
-        n_co = rng.poisson(expected)
-
-        if interference and n_co > 1:
-            # Crossover interference suppresses closely spaced events. Sampling
-            # then enforcing a minimum spacing is a crude but standard stand-in
-            # for a full gamma-model; without it, simulated data has far more
-            # tight double-crossovers than real meiosis.
-            positions_cm = np.sort(rng.uniform(cm[0], cm[-1], size=n_co))
-            keep = [positions_cm[0]]
-            for p in positions_cm[1:]:
-                if p - keep[-1] >= 10.0:   # ~10 cM minimum spacing
-                    keep.append(p)
-            positions_cm = np.array(keep)
-        elif n_co > 0:
-            positions_cm = np.sort(rng.uniform(cm[0], cm[-1], size=n_co))
+        # The scale factor is 1.0 whenever a true sex-specific map is in use;
+        # it only compensates for a sex-averaged map (see meiosis_cm).
+        if interference:
+            positions_cm = _gamma_renewal_crossovers(
+                cm[0], cm[0] + length_cm * scale, rng, interference_nu)
+            positions_cm = cm[0] + (positions_cm - cm[0]) / scale
         else:
-            positions_cm = np.array([])
+            n_co = rng.poisson((length_cm / 100.0) * scale)
+            positions_cm = np.sort(rng.uniform(cm[0], cm[-1], size=n_co))
 
         start = rng.integers(0, 2)
         sel = np.full(len(idx), start, dtype=np.int8)
@@ -159,27 +242,56 @@ def _simulate_meiosis(markers, rng, sex="female", interference=True):
     return selector, crossovers
 
 
+def _to_genotype_frame(hap0, hap1, rng, no_call_rate=0.0, error_rate=0.0):
+    """
+    Two haplotypes -> a vendor-style genotype frame, with artefacts injected.
+
+    A miscall replaces one allele with a random base; a no-call blanks the
+    whole genotype, which is how vendors actually emit missing data.
+    """
+    geno = pd.DataFrame({"allele1": BASES[hap0], "allele2": BASES[hap1]})
+    n = len(geno)
+    if error_rate > 0:
+        for col in ("allele1", "allele2"):
+            hit = rng.random(n) < (error_rate / 2)
+            geno.loc[hit, col] = BASES[rng.integers(0, 4, size=hit.sum())]
+    if no_call_rate > 0:
+        hit = rng.random(n) < no_call_rate
+        geno.loc[hit, "allele1"] = "-"
+        geno.loc[hit, "allele2"] = "-"
+    return geno
+
+
 def simulate_pedigree(
     markers,
     n_siblings=3,
     seed=0,
     no_call_rate=0.0,
     error_rate=0.0,
+    maf_beta=MAF_BETA,
 ):
     """
     Simulate 4 grandparents -> 2 parents -> n_siblings, with ground truth.
 
     no_call_rate and error_rate inject the two artefacts that matter for the
     correctness of a segment caller: missing genotypes, and miscalled ones.
+
+    Also emits both parents and one unrelated individual under `relatives`.
+    Those are not decoration: a parent-child pair is IBD1 at every locus and an
+    unrelated pair is IBD0 everywhere, which is exactly what calibrates the
+    emission model. Without them, evaluating the HMM on simulated data would
+    have to assume the emission table it is meant to be testing.
     """
     rng = np.random.default_rng(seed)
     n = len(markers)
 
+    # --- The marker panel's own allele model ----------------------------
+    panel = assign_allele_frequencies(n, rng, maf_beta)
+
     # --- Founders: the four grandparents -------------------------------
     founders = {}
     for gp in GRANDPARENTS:
-        hap0, hap1, _, _ = _draw_founder_haplotypes(n, rng)
-        founders[gp] = (hap0, hap1)
+        founders[gp] = _draw_founder_haplotypes(panel, rng)
 
     # --- Parents: each a recombinant of two grandparents ----------------
     # The father's transmitted gamete carries PGF/PGM origin labels; the
@@ -217,27 +329,21 @@ def simulate_pedigree(
             co_pair[side] = co
 
         a1, a2 = allele_pair
-        geno = pd.DataFrame({"allele1": BASES[a1], "allele2": BASES[a2]})
-
-        # --- Artefact injection ------------------------------------------
-        if error_rate > 0:
-            # A miscall replaces one allele with a random base. This is the
-            # artefact that isolated-mismatch smoothing is meant to absorb.
-            for col in ("allele1", "allele2"):
-                hit = rng.random(n) < (error_rate / 2)
-                geno.loc[hit, col] = BASES[rng.integers(0, 4, size=hit.sum())]
-
-        if no_call_rate > 0:
-            # Vendors emit a no-call for the whole genotype, not one allele.
-            hit = rng.random(n) < no_call_rate
-            geno.loc[hit, "allele1"] = "-"
-            geno.loc[hit, "allele2"] = "-"
-
-        genotypes[name] = geno
+        genotypes[name] = _to_genotype_frame(a1, a2, rng, no_call_rate, error_rate)
         origins[name] = pd.DataFrame(
             {"paternal": origin_pair[0], "maternal": origin_pair[1]}
         )
         crossovers[name] = co_pair
+
+    # --- Calibration relatives -------------------------------------------
+    relatives = {
+        "Father": _to_genotype_frame(*parents["father"]["haps"], rng,
+                                     no_call_rate, error_rate),
+        "Mother": _to_genotype_frame(*parents["mother"]["haps"], rng,
+                                     no_call_rate, error_rate),
+        "Unrelated": _to_genotype_frame(*_draw_founder_haplotypes(panel, rng), rng,
+                                        no_call_rate, error_rate),
+    }
 
     return Pedigree(
         markers=markers,
@@ -245,6 +351,7 @@ def simulate_pedigree(
         origins=origins,
         crossovers=crossovers,
         founders=founders,
+        relatives=relatives,
     )
 
 
