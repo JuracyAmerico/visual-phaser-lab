@@ -1,0 +1,26 @@
+{
+  "segment": {
+    "ece_raw": 0.1035,
+    "ece_calibrated": 0.0666,
+    "accuracy": 0.8457
+  },
+  "marker": {
+    "ece_raw": 0.0614,
+    "ece_calibrated": 0.0547,
+    "accuracy": 0.7949
+  },
+  "crossovers": {
+    "maternal": 0.92,
+    "paternal": 0.964
+  },
+  "config": {
+    "families": 8,
+    "siblings": 3,
+    "markers_per_chrom": 12000,
+    "thinning_cm": 0.08,
+    "no_call_rate": 0.002,
+    "error_rate": 0.0002,
+    "windows": 120,
+    "out_dir": "data"
+  }
+}
