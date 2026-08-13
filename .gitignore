@@ -7,3 +7,7 @@ run_*/
 *.csv
 *.csv.gz
 data/kits/
+
+# Derived third-party genetic map: 5.7 MB, rebuilt by tools/build_sex_map.py.
+# Not vendored because the upstream release states no redistribution terms.
+data/sex_specific_map.txt
