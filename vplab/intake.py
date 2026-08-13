@@ -20,7 +20,7 @@ half-siblings, aunts/uncles and grandparents (all ~0%) -- which total cM alone
 cannot do, since all three sit near 1750 cM.
 
 Usage:
-    python -m vplab.intake <file.csv[.gz]> --name Alice --group other-relatives
+    python -m vplab.intake <file.csv[.gz]> --name Alice --group other
     python -m vplab.intake --matrix          # re-report across all filed kits
 """
 from __future__ import annotations
@@ -161,8 +161,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("path", nargs="?", help="raw DNA file to take in")
     parser.add_argument("--name", help="short kit name, e.g. Alice")
-    parser.add_argument("--group", default="other-relatives",
-                        help="subfolder: paternal-trio | maternal-trio | other-relatives")
+    parser.add_argument("--group", default="other",
+                        help="subfolder to file the kit under, e.g. trio-a | trio-b | other")
     parser.add_argument("--matrix", action="store_true",
                         help="report relationships across all filed kits and exit")
     args = parser.parse_args(argv)

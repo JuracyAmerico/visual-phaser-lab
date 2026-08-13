@@ -45,8 +45,8 @@ class TestSimulatorRealism:
         Allele identity is a property of the marker, not of the individual. An
         earlier version drew a fresh reference/alternate pair per founder,
         giving each one a private biallelic system: unrelated people then
-        looked *excluded* at 56% of markers where real kits sit at 3.3%.
-        Exclusion is the strongest signal the method has, so that made
+        looked *excluded* at 56% of markers where the reference dataset sits
+        at 3.3%. Exclusion is the strongest signal the method has, so that made
         simulated data far easier than reality and every accuracy measured on
         it an overstatement.
         """
@@ -55,8 +55,10 @@ class TestSimulatorRealism:
         informative = calls[calls != E.MISSING]
         fir = float(np.mean(informative == E.FIR))
         nir = float(np.mean(informative == E.NIR))
-        assert 0.68 <= fir <= 0.80, f"unrelated FIR {fir:.1%}, real kits give 74.0%"
-        assert 0.02 <= nir <= 0.06, f"unrelated NIR {nir:.1%}, real kits give 3.3%"
+        assert 0.68 <= fir <= 0.80, (
+            f"unrelated FIR {fir:.1%}, reference dataset gives 74.0%")
+        assert 0.02 <= nir <= 0.06, (
+            f"unrelated NIR {nir:.1%}, reference dataset gives 3.3%")
 
     def test_parent_child_pair_is_never_excluded(self, panel):
         """A parent and child share one copy at every locus, by definition."""

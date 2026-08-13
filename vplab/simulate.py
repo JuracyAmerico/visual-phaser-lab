@@ -98,9 +98,9 @@ def build_marker_panel(genetic_map, n_markers_per_chrom=6000, rng=None,
 #
 # This is not a cosmetic detail: it sets how often two *unrelated* people
 # coincide by chance, which is the noise floor the whole method works against.
-# The default is calibrated against a real unrelated pair in the reference
-# family (FIR at 74.0% of markers, NIR at 3.3%); Beta(0.25, 1.2) reproduces
-# 73.9% / 3.6%. Consumer chips are dominated by low-frequency markers, so a
+# The default is calibrated against an unrelated pair in a reference
+# consumer-DNA dataset (FIR at 74.0% of markers, NIR at 3.3%);
+# Beta(0.25, 1.2) reproduces 73.9% / 3.6%. Consumer chips are dominated by low-frequency markers, so a
 # flat MAF distribution makes simulated data far more discriminating than any
 # real dataset.
 MAF_BETA = (0.25, 1.2)
@@ -116,8 +116,9 @@ def assign_allele_frequencies(n_markers, rng, maf_beta=MAF_BETA):
     a locus. Drawing a fresh reference/alternate pair per founder — as an
     earlier version of this file did — gives each founder a private biallelic
     system, so two unrelated people almost never share an allele. Measured, it
-    put an unrelated pair at 56% no-match where real kits sit at 3.3%, handing
-    the downstream model ~17x more exclusion evidence than reality supplies.
+    put an unrelated pair at 56% no-match where the reference dataset sits at
+    3.3%, handing the downstream model ~17x more exclusion evidence than
+    reality supplies.
     Exclusions are the strongest signal visual phasing has, so that error makes
     simulated data *easier* than real data, not noisier.
     """

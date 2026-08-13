@@ -4,8 +4,22 @@ Companion tooling for [visual-phaser](https://github.com/mickjolley/visual-phase
 The upstream tool produces the pairwise comparison; this adds the layer that
 turns it into inference, plus the machinery to know whether any of it is right.
 
-**No genotypes live here.** Real kits are kept outside this repo entirely
-(`~/Documents/DNA-Kits/`) and `.gitignore` blocks `*.csv` as a backstop.
+**No genotypes live here.** Kits live outside this repo entirely, at whatever
+location `VPLAB_KITS_DIR` points to, and `.gitignore` blocks `*.csv` as a
+backstop. Every tool takes kit names on the command line — nothing about any
+particular person, family or filesystem is baked in.
+
+### The reference dataset
+
+Several figures below are measured against a **reference dataset**: a
+consumer-DNA collection containing two independent trios of full siblings, plus
+one parent–child pair and one unrelated pair for calibration. Only aggregate
+statistics from it appear here — marker-level rates and crossover counts. No
+genotypes, no identifiers, and nothing from which either could be reconstructed.
+
+It is there because the alternative is borrowing constants from a paper about a
+different chip and a different population, which is exactly what this project
+argues against.
 
 ## `vplab/simulate.py` — ground truth
 
@@ -15,28 +29,28 @@ grandparental origins. Every visual-phasing tool in existence asserts its
 accuracy rather than measuring it, because real families do not come with known
 crossovers. Simulated ones do.
 
-Validated against the literature and against real kits:
+Validated against the literature and against the reference dataset:
 
 | quantity | simulated | expected |
 |----------|-----------|----------|
 | IBD sharing between full siblings | 25.4 / 48.8 / 25.8 % | 25 / 50 / 25 |
 | crossovers per gamete, paternal | 25.5 | 26.1 (map) |
 | crossovers per gamete, maternal | 40.9 | 40.9 (map) |
-| unrelated pair, fully identical per marker | 73.3 % | 74.0 % (measured on real kits) |
-| unrelated pair, excluded per marker | 3.8 % | 3.3 % (measured on real kits) |
+| unrelated pair, fully identical per marker | 73.3 % | 74.0 % (reference dataset) |
+| unrelated pair, excluded per marker | 3.8 % | 3.3 % (reference dataset) |
 
 ### Two ways this simulator was wrong, and how it was caught
 
-Both were found by asking the simulator to reproduce a number measured on real
-kits, rather than by reading its code.
+Both were found by asking the simulator to reproduce a number measured on the
+reference dataset, rather than by reading its code.
 
 **Allele frequencies belonged to the founder, not to the marker.** Every
 founder drew a fresh reference/alternate pair, so each one effectively had a
 private biallelic system and two unrelated people almost never shared an
 allele. Measured: unrelated pairs came out *excluded* at 56% of markers where
-real kits give 3.3%. Exclusion is the strongest signal visual phasing has, so
-this handed the model roughly 17x more discriminating evidence than reality
-supplies — the simulator was **easier** than real data, and this README
+the reference dataset gives 3.3%. Exclusion is the strongest signal visual
+phasing has, so this handed the model roughly 17x more discriminating
+evidence than reality supplies — the simulator was **easier** than real data, and this README
 previously drew the opposite conclusion from the same observation, calling its
 accuracy figures "pessimistic". They were overstatements.
 
@@ -72,11 +86,12 @@ which is what exposed the no-call defect.
 ## `vplab/intake.py` — kit intake
 
 Fingerprint, de-duplicate and place a raw DNA file, then relate it to every kit
-already on file. Name-based filing is unsafe: Genera exports all arrive as
-`dados_brutos<date>.csv.gz` with no identity inside, and two relatives in the
-test family share a given name. One kit was mis-filed and only the DNA caught it.
+already on file. Name-based filing is unsafe: some vendors export every kit
+under the same date-stamped filename with no identity inside it, and relatives
+routinely share a given name. A mis-filed kit was caught by its DNA and not by
+its label, which is why identity is established from the data every time.
 
-    python -m vplab.intake <file.csv.gz> --name Alice --group other-relatives
+    python -m vplab.intake <file.csv.gz> --name Alice --group other
     python -m vplab.intake --matrix
 
 FIR is the discriminator: only people sharing *both* parents can be fully
@@ -107,7 +122,7 @@ the IBD0 row, a parent–child pair gives IBD1 (they share exactly one copy at
 every locus by definition), and apparent exclusions in that parent–child pair
 give the error rate.
 
-Measured on a real family dataset, per raw marker with no smoothing: a
+Measured on the reference dataset, per raw marker with no smoothing: a
 parent–child pair is apparently excluded at **1.02%** of markers, and 64% of
 those exclusions are isolated single markers — that is the genotyping error
 rate the emission model needs, because the HMM consumes raw calls. (An earlier
@@ -140,7 +155,7 @@ human meiotic recombination at multiple scales*, Nat. Commun. **8**, 14994 (2017
 
 Everything below comes from `python -m tools.evaluate_model` (8 simulated
 families, 3 siblings each, 22 chromosomes) and `python -m tools.phase_real` on
-two independent real trios. No figure here is quoted from memory; the rule
+the reference dataset's two sibling trios. No figure here is quoted from memory; the rule
 exists because the previous set of figures did not survive re-derivation.
 
 | | before Phase 1 | after |
@@ -177,10 +192,10 @@ entirely (0 of 10) and lifted segment accuracy from 83% to 88% in the same run.
 
 Thinning to 0.2 cM had been calibrated by pushing the spacing up until inferred
 crossover counts stopped exploding. With the transition model corrected, that
-crutch is no longer needed. Ratios to the literature rate, both sides, on two
-independent real trios:
+crutch is no longer needed. Ratios to the literature rate, both sides, on the
+reference dataset's two sibling trios:
 
-| thinning | paternal trio | maternal trio |
+| thinning | trio A | trio B |
 |---|---|---|
 | unthinned | 5.6× | — |
 | 0.02 cM | 1.11 / 0.92 | 1.14 / 1.16 |
@@ -222,47 +237,45 @@ target for later work rather than being papered over.
   cannot contradict itself. This is how a set of confident, mutually
   inconsistent line assignments got produced here once.
 
-### Real data: crossover counts on two independent trios
+### Real data: crossover counts
 
 Human meiosis is tightly constrained, so a crossover count far off the
 biological rate condemns the transition model before any segment call is worth
-reading. Ratios to literature (~26.1 male, ~40.9 female per gamete):
+reading. Across the reference dataset's two sibling trios, the four side-level
+counts land at **0.84 to 1.07** of the literature rate (~26.1 male, ~40.9 female
+per gamete): three of the four within 7%, the fourth at 0.84 against a ±15%
+target, with sampling noise on ~78 crossovers of about ±11%. Before Phase 1 the
+same measurement gave 0.56 on one side.
 
-| trio | side A | side B |
-|---|---|---|
-| three full siblings, family 1 | 0.98 | 0.84 |
-| three full siblings, family 2 | 0.98 | 1.07 |
-
-Three of the four sit within 7% of the literature rate; the fourth is at 0.84
-against a ±15% target, and the sampling noise on ~78 crossovers is about ±11%.
-Before Phase 1 the same measurement gave 0.56 on one side.
-
-Sides are labelled A and B on purpose. **Which one is the father's is not
-established by these counts** — the model is told one side recombines less, so
-reading the answer off the rate would be circular. Naming a side takes an
-outside anchor: a relative descending from exactly one grandparent.
+**Which side is the father's is not established by these counts** — the model is
+told one side recombines less, so reading the answer off the rate would be
+circular. Naming a side takes an outside anchor: a relative descending from
+exactly one grandparent.
 
 ### Real data, via an independent anchor
 
-Where the HMM says two siblings inherited the same maternal haplotype, their
-matching to a great-aunt is 86.5% concordant; where it says they differ, 66.9%.
-A **+19.6% lift** against evidence the model never saw.
+Using a relative the model never saw as an oracle: where the HMM says two
+siblings inherited the same haplotype on a given side, their matching to that
+relative is 86.5% concordant; where it says they differ, 66.9%. A **+19.6%
+lift** against outside evidence.
 
 ### Two validation designs that failed first
 
-Both are recorded because each looked reasonable and produced a confident
-wrong answer.
+Both are recorded because each looked reasonable and produced a confident wrong
+answer, and both are traps any user of this method can walk into.
 
-1. **Saturation.** Testing against "matches any of three great-aunts" — each
-   shares ~50% of the genome, so the union covers ~87% and there is no contrast
-   left to measure. Produced a flat 80–90% on both groups.
+1. **Saturation.** Validating against "matches any of several close relatives" —
+   each shares ~50% of the genome, so their union covers ~87% and no contrast is
+   left to measure. Produces a flat 80–90% on both groups regardless of whether
+   the model works.
 
-2. **A pedigree-level error.** A great-aunt is the sister of the trio's
-   *mother*, so she descends from *both* of that mother's parents and is
-   related to both maternal groups. She cannot discriminate which grandparent a
-   segment came from, and the near-zero separation measured was the correct
-   answer to a meaningless question. Anchoring *which* grandparent needs someone
-   related to only one of them.
+2. **A pedigree-level error.** A great-aunt is a *sibling of a grandparent*, so
+   she descends from both of that grandparent's parents and is related to both
+   groups on that side. She cannot discriminate which of them a segment came
+   from, and the near-zero separation measured was the correct answer to a
+   meaningless question. Anchoring *which* grandparent needs someone descended
+   from exactly one of them — which, for many families, is the relative nobody
+   has tested.
 
 ## Not yet built
 
