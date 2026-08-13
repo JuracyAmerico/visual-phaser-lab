@@ -48,8 +48,8 @@ which is what exposed the no-call defect.
 
 Fingerprint, de-duplicate and place a raw DNA file, then relate it to every kit
 already on file. Name-based filing is unsafe: Genera exports all arrive as
-`dados_brutos<date>.csv.gz` with no identity inside, and two relatives in this
-family share a given name. One kit was mis-filed and only the DNA caught it.
+`dados_brutos<date>.csv.gz` with no identity inside, and two relatives in the
+test family share a given name. One kit was mis-filed and only the DNA caught it.
 
     python -m vplab.intake <file.csv.gz> --name Maria --group other-relatives
     python -m vplab.intake --matrix
@@ -77,7 +77,7 @@ the IBD0 row, a parent–child pair gives IBD1 (they share exactly one copy at
 every locus by definition), and apparent exclusions in that parent–child pair
 give the error rate.
 
-Measured on this family: **0.0115% genotyping error**, and an unrelated pair
+Measured on a real family dataset: **0.0115% genotyping error**, and an unrelated pair
 reads as fully identical at **74% of individual markers**. That second figure is
 why visual phasing works on runs and never on single SNPs — per-marker FIR
 carries almost no information, and the discriminating signal is NIR (3.3%

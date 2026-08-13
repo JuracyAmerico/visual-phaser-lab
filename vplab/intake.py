@@ -4,8 +4,8 @@ Kit intake — fingerprint, de-duplicate, and place a raw DNA file, then report
 how it relates to every kit already on file.
 
 Built because name-based filing is unsafe here: every Genera export arrives as
-`dados_brutos<date>.csv.gz` with no identity inside the file, and two relatives
-in this family share a given name. One kit was already mis-filed and only the
+`dados_brutos<date>.csv.gz` with no identity inside the file, and relatives
+can share a given name. One kit was already mis-filed and only the
 DNA caught it. So nothing is trusted from a filename — identity is established
 from the data, every time.
 
@@ -28,6 +28,7 @@ from __future__ import annotations
 import argparse
 import gzip
 import hashlib
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -35,9 +36,16 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-KITS_DIR = Path.home() / "Documents" / "DNA-Kits"
-ENGINE = Path("/Users/americo/projects/visual-phaser/Visual_Phaser.V1.2.py")
-MAP = Path(__file__).resolve().parent.parent / "data" / "min_map.txt"
+# All three locations are overridable by environment variable, so the tool
+# carries no assumptions about any particular machine's layout.
+KITS_DIR = Path(os.environ.get("VPLAB_KITS_DIR", Path.home() / "Documents" / "DNA-Kits"))
+ENGINE = Path(os.environ.get(
+    "VPLAB_ENGINE",
+    Path.home() / "projects" / "visual-phaser" / "Visual_Phaser.V1.2.py",
+))
+MAP = Path(os.environ.get(
+    "VPLAB_MAP", Path(__file__).resolve().parent.parent / "data" / "min_map.txt"
+))
 
 # Autosomal genetic length, sex-averaged, used to express FIR as a fraction.
 GENOME_CM = 3545.0
