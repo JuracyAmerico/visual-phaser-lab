@@ -94,6 +94,25 @@ inherited the same maternal haplotype, their matching to a great-aunt is 86.5%
 concordant; where it says they differ, 66.9%. A **+19.6% lift** against evidence
 the model never saw. Consistent with the simulated 85%.
 
+### Segment-level accuracy: 66.5%
+
+The match analysis relies on **segment-level** partition calls, but only
+marker-level accuracy had ever been measured (85.5%). Measured the thing that
+matters — 10–30 cM windows against ground truth, comparing the label-invariant
+partition:
+
+    correct partition: 242 / 364 = 66.5%
+    chance baseline:   25%  (four possible 3-sibling partitions)
+
+Well above chance, but right two segments in three — not nine in ten. This
+explains an otherwise alarming pattern in real data: matches with one
+discriminating segment looked perfectly consistent, while matches with five or
+six contradicted themselves. **A single segment cannot contradict itself; it
+just looks clean at 66.5%.**
+
+**Rule this establishes:** never trust a single-segment side assignment. Require
+3+ discriminating segments and take the majority (~79% reliable at five).
+
 ### Two validation designs that failed first
 
 Both are recorded because each looked reasonable and produced a confident
